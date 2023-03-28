@@ -14,6 +14,7 @@ include_directories(
   ${catkin_INCLUDE_DIRS}
 )
 
+add_definitions(-DLINUXSOCKETS)
 
 add_executable(${PROJECT_NAME}_robot_state
   src/abb_robot_state_node.cpp
