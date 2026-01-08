@@ -54,7 +54,8 @@ public:
     // correct for parallel linkage effects, if desired
     //   - use NEGATIVE factor for motor->joint correction
     abb::utils::linkage_transform(pos_in, pos_out, J23_coupled_ ? -1:0 );
-
+    const double deg_to_rad = M_PI / 180.0;
+    std::transform(pos_out->begin(), pos_out->end(), pos_out->begin(),[deg_to_rad](double x) { return x * deg_to_rad; });
     return true;
   }
 };
