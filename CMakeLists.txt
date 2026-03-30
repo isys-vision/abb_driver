@@ -11,15 +11,46 @@ catkin_package(
 
 include_directories(
   include
+  include/abb_driver
+  include/abb_driver/simple_message
+  include/abb_driver/simple_message/messages
+  include/abb_driver/simple_message/classes
   ${catkin_INCLUDE_DIRS}
 )
+
+set(MSG_SRC_FILES
+  src/simple_message/classes/mikado_connection_info.cpp
+  src/simple_message/classes/mikado_dynamic_joints_traj_pt.cpp
+  src/simple_message/classes/mikado_dynamic_joints.cpp
+  src/simple_message/messages/mikado_dynamic_joints_traj_pt_message.cpp
+  src/simple_message/messages/mikado_dynamic_joints_message.cpp
+  src/simple_message/messages/mikado_connection_info_message.cpp
+)
+
+add_library(abb_interfaces
+    src/abb_joint_trajectory_interface.cpp
+    src/abb_joint_trajectory_downloader.cpp
+    src/abb_simple_comms_fault_handler.cpp
+    src/abb_message_manager.cpp
+    src/abb_robot_state_interface.cpp
+)
+
+add_library(mikado_simple_message ${MSG_SRC_FILES})
+target_link_libraries(mikado_simple_message
+  simple_message)
 
 add_definitions(-DLINUXSOCKETS)
 
 add_executable(${PROJECT_NAME}_robot_state
   src/abb_robot_state_node.cpp
-  src/abb_utils.cpp)
+  src/abb_utils.cpp
+  src/dynamic_joints_relay_handler.cpp
+  src/abb_robot_state_interface.cpp
+  src/abb_message_manager.cpp
+  src/abb_simple_comms_fault_handler.cpp
+  )
 target_link_libraries(${PROJECT_NAME}_robot_state
+  mikado_simple_message
   industrial_robot_client
   simple_message
   ${catkin_LIBRARIES})
@@ -35,6 +66,8 @@ add_executable(${PROJECT_NAME}_motion_download_interface
   src/abb_joint_downloader_node.cpp
   src/abb_utils.cpp)
 target_link_libraries(${PROJECT_NAME}_motion_download_interface
+  abb_interfaces
+  mikado_simple_message
   industrial_robot_client
   simple_message
   ${catkin_LIBRARIES})
@@ -51,6 +84,15 @@ install(
     ${PROJECT_NAME}_motion_download_interface
   DESTINATION
     ${CATKIN_PACKAGE_BIN_DESTINATION}
+)
+
+install(
+  TARGETS
+    mikado_simple_message
+    abb_interfaces
+  ARCHIVE DESTINATION ${CATKIN_PACKAGE_LIB_DESTINATION}
+  LIBRARY DESTINATION ${CATKIN_PACKAGE_LIB_DESTINATION}
+  RUNTIME DESTINATION ${CATKIN_PACKAGE_BIN_DESTINATION}
 )
 
 foreach(dir launch rapid)

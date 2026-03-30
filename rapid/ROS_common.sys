@@ -28,18 +28,25 @@ MODULE ROS_common(SYSMODULE)
 ! CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY
 ! WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
+! not used anymore: keeping it in case duration should be used later.
 RECORD ROS_joint_trajectory_pt
     robjoint joint_pos;
     extjoint extax_pos;
     num duration;
 ENDRECORD
 
-CONST num MAX_TRAJ_LENGTH := 200;
+CONST num MAX_TRAJ_LENGTH := 500;
 
 ! These variables should use TestAndSet read/write protection to prevent conflicts
-PERS bool ROS_trajectory_lock := false;
-PERS ROS_joint_trajectory_pt ROS_trajectory{MAX_TRAJ_LENGTH};
-PERS num ROS_trajectory_size := 0;
-PERS bool ROS_new_trajectory := false;       ! can safely READ, but should use lock to WRITE
+PERS bool ROS_trajectory_lock := FALSE;
+! can safely READ, but should use lock to WRITE
+PERS bool ROS_new_trajectory := FALSE;
+PERS bool is_not_receiving_traj := TRUE;
+! traj buffer -> module needs to be shared to allow acces from all modules
+VAR jointtarget traj_buffer{MAX_TRAJ_LENGTH};
+VAR num velocities{MAX_TRAJ_LENGTH};
+PERS num traj_size_pers := 127;
+PERS bool robotAtGoal := FALSE;
+PERS bool isDebug := FALSE;
 
 ENDMODULE

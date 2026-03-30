@@ -30,22 +30,36 @@
  */
 
 #include "abb_driver/abb_utils.h"
-#include "industrial_robot_client/joint_trajectory_downloader.h"
+#include "abb_joint_trajectory_downloader.h"
 #include "industrial_utils/param_utils.h"
+#include "simple_message/messages/joint_traj_pt_message.h"
+#include "simple_message/joint_data.h"
+#include "simple_message/classes/mikado_connection_info.h"
+#include "simple_message/messages/mikado_connection_info_message.h"
+#include "simple_message/classes/mikado_dynamic_joints_traj_pt.h"
+#include "simple_message/messages/mikado_dynamic_joints_traj_pt_message.h"
+#include "simple_message/classes/mikado_dynamic_joints.h"
 
-using industrial_robot_client::joint_trajectory_downloader::JointTrajectoryDownloader;
+using industrial_robot_client::joint_trajectory_downloader::ABBJointTrajectoryDownloader;
 namespace StandardSocketPorts = industrial::simple_socket::StandardSocketPorts;
 
-class ABB_JointTrajectoryDownloader : public JointTrajectoryDownloader
+class ABB_JointTrajectoryDownloader : public ABBJointTrajectoryDownloader
 {
-  using JointTrajectoryDownloader::init;  // so base-class init() stays visible
+  using ABBJointTrajectoryDownloader::init;  // so base-class init() stays visible
 
   bool J23_coupled_;
 
 public:
+
+  ~ABB_JointTrajectoryDownloader()
+  {
+    // running trajectory stop here instead of in base class destructor
+    trajectoryStop();
+  }
+
   bool init(std::string default_ip = "", int default_port = StandardSocketPorts::MOTION)
   {
-    if (!JointTrajectoryDownloader::init(default_ip, default_port))  // call base-class init()
+    if (!ABBJointTrajectoryDownloader::init(default_ip, default_port))  // call base-class init()
       return false;
 
     if (ros::param::has("J23_coupled"))
@@ -56,11 +70,67 @@ public:
     return true;
   }
 
+  bool negotiateConnection(){
+    industrial::simple_message::SimpleMessage msg;
+    industrial::simple_message::mikado_classes::MikadoConnectionInfo mikConnectionInfo;
+    industrial::simple_message::mikado_messages::MikadoConnectionInfoMessage mikConnectionInfoMsg;
+    int number_axis_trajectory = 6;
+    int number_external_axis_trajectory = 0;
+    bool is_traj_radian = false;
+    bool is_traj_velocity = false;
+    bool is_traj_duration = false;
+    ros::NodeHandle handle;
+    // read ros_params in, if not present, use defaults
+    std::string prefix = "/robot_description_manipulators/manipulator/";
+    handle.param(prefix + "connection_info_number_axes_trajectory", number_axis_trajectory, number_axis_trajectory);
+    handle.param(prefix + "connection_info_number_external_axes_trajectory", number_external_axis_trajectory, number_external_axis_trajectory);
+    handle.param(prefix + "connection_info_is_traj_radian", is_traj_radian, is_traj_radian);
+    handle.param(prefix + "connection_info_is_traj_velocity", is_traj_velocity, is_traj_velocity);
+    handle.param(prefix + "connection_info_is_traj_duration", is_traj_duration, is_traj_duration);
+
+    mikConnectionInfo.init(number_axis_trajectory, 0, number_external_axis_trajectory,
+                            0, is_traj_radian, false, is_traj_velocity,
+                            is_traj_duration, false);
+    mikConnectionInfoMsg.init(mikConnectionInfo);
+    mikConnectionInfoMsg.toRequest(msg);
+    bool res = this->connection_->sendMsg(msg);
+    if (res){
+      this->number_axis_trajectory_ = number_axis_trajectory;
+      this->number_external_axis_trajectory_ = number_external_axis_trajectory;
+      this->is_traj_radian_ = is_traj_radian;
+      this->is_traj_velocity_ = is_traj_velocity;
+      this->is_traj_duration_ = is_traj_duration;
+      ROS_INFO("Sent connection information. Trajectory connection parameters:\n"
+                "  number_axis_trajectory: %d\n"
+                "  number_external_axis_trajectory: %d\n"
+                "  is_traj_radian: %s\n"
+                "  is_traj_velocity: %s\n"
+                "  is_traj_duration: %s\n",
+                number_axis_trajectory,
+                number_external_axis_trajectory,
+                is_traj_radian ? "true" : "false",
+                is_traj_velocity ? "true" : "false",
+                is_traj_duration ? "true" : "false"
+              );
+    } else {
+      ROS_WARN("Failed to send connection information");
+    }
+    return res;
+  }
+
   bool transform(const trajectory_msgs::JointTrajectoryPoint& pt_in, trajectory_msgs::JointTrajectoryPoint* pt_out)
   {
     // correct for parallel linkage effects, if desired
     //   - use POSITIVE factor for joint->motor correction
     abb::utils::linkage_transform(pt_in, pt_out, J23_coupled_ ? +1:0 );
+    if(!this->is_traj_radian_){
+      const double deg_to_rad = 180.0 / M_PI;
+      std::transform(pt_out->positions.begin(), pt_out->positions.end(), pt_out->positions.begin(),
+                    [deg_to_rad](double x) { return x * deg_to_rad; });
+    }
+
+    // transform external axes to mm instead of m
+
 
     return true;
   }
@@ -70,6 +140,134 @@ public:
     *rbt_velocity = 0;  // unused by ABB driver
     return true;
   }
+
+  bool send_to_robot(const std::vector<industrial::joint_traj_pt_message::JointTrajPtMessage>& messages)
+  {
+    ROS_WARN("SENDING TO ROBOT");
+    bool rslt=true;
+    std::vector<industrial::joint_traj_pt_message::JointTrajPtMessage> points(messages);
+    std::vector<industrial::simple_message::mikado_messages::MikadoDynamicJointsTrajPtMessage> dynamicPoints;
+    industrial::simple_message::mikado_messages::MikadoDynamicJointsTrajPtMessage mikDynamicJointsTrajPtMessage;
+    industrial::simple_message::mikado_classes::MikadoDynamicJointsTrajPt mikDynamicJointsTrajPt;
+    industrial::simple_message::mikado_classes::MikadoDynamicJoints mikDynamicJoints;
+    mikDynamicJoints.init((this->number_axis_trajectory_+ this->number_external_axis_trajectory_));
+    mikDynamicJointsTrajPt.init();
+    mikDynamicJointsTrajPt.setPositions(mikDynamicJoints);
+    if(this->is_traj_duration_){
+      mikDynamicJointsTrajPt.setField(industrial::simple_message::mikado_classes::DynamicJointsValidFieldTypes::DURATION);
+    } else {
+      mikDynamicJointsTrajPt.setFieldInvalid(industrial::simple_message::mikado_classes::DynamicJointsValidFieldTypes::DURATION);
+    }
+    if(this->is_traj_velocity_){
+      mikDynamicJointsTrajPt.setField(industrial::simple_message::mikado_classes::DynamicJointsValidFieldTypes::VELOCITY);
+    } else {
+      mikDynamicJointsTrajPt.setFieldInvalid(industrial::simple_message::mikado_classes::DynamicJointsValidFieldTypes::VELOCITY);
+    }
+    industrial::simple_message::SimpleMessage msg;
+
+    // Trajectory download requires at least two points (START/END)
+    if (points.size() < 2){
+      points.push_back(industrial::joint_traj_pt_message::JointTrajPtMessage(points[0]));
+    }
+
+    // The first and last points are assigned special sequence values
+    points.begin()->setSequence(industrial::joint_traj_pt::SpecialSeqValues::START_TRAJECTORY_DOWNLOAD);
+    points.back().setSequence(industrial::joint_traj_pt::SpecialSeqValues::END_TRAJECTORY);
+
+    if (!this->connection_->isConnected())
+    {
+      ROS_WARN("Attempting robot reconnection");
+      if(this->connection_->makeConnect()){
+        this->negotiateConnection();
+      };
+    }
+
+    ROS_INFO("Sending trajectory points, size: %d", (int)points.size());
+    industrial::joint_data::JointData jd;
+
+
+    for (int i = 0; i < (int)points.size(); ++i)
+    {
+      points[i].point_.getJointPosition(jd);
+      ROS_DEBUG("Sending joints trajectory point[%d]", i);
+      for (int j = 0; j < (this->number_axis_trajectory_ + this->number_external_axis_trajectory_); j++){
+        mikDynamicJoints.setJoint(j, jd.getJoint(j));
+      }
+      mikDynamicJointsTrajPtMessage.point_.setPositions(mikDynamicJoints);
+      mikDynamicJointsTrajPtMessage.point_.setSequence(points[i].point_.getSequence());
+      if(this->is_traj_velocity_){
+        mikDynamicJointsTrajPtMessage.point_.setField(DynamicJointsValidFieldTypes::VELOCITY);
+        mikDynamicJointsTrajPtMessage.point_.setVelocity(points[i].point_.getVelocity());
+      }
+      if(this->is_traj_velocity_){
+        mikDynamicJointsTrajPtMessage.point_.setField(DynamicJointsValidFieldTypes::DURATION);
+        mikDynamicJointsTrajPtMessage.point_.setDuration(points[i].point_.getDuration());
+      }
+      bool ptRslt = false;
+      if(i == 0){
+        industrial::simple_message::SimpleMessage reply;
+        mikDynamicJointsTrajPtMessage.toRequest(msg);
+        ROS_WARN("Sending point0 of type: %d", msg.getCommType());
+        ptRslt = this->connection_->sendAndReceiveMsg(msg, reply);
+        if(!ptRslt){
+          ROS_WARN("Attempting robot reconnection");
+          if(this->connection_->makeConnect()){
+            ROS_WARN("Reconnect successfull, trying to send connection info message");
+            if(this->negotiateConnection()){
+              ROS_WARN("Connection info message sent. Trying to resend point");
+              ptRslt = this->connection_->sendAndReceiveMsg(msg, reply);
+            } else {
+              ROS_WARN("Could not send connection info message");
+            }
+          } else{
+            ROS_WARN("Could not reconnect");
+          }
+        }
+      } else{
+        mikDynamicJointsTrajPtMessage.toTopic(msg);
+        ptRslt = this->connection_->sendMsg(msg);
+      }
+      if (ptRslt) {
+        ROS_WARN("Point[%d] sent to controller", i);
+      } else{
+        ROS_WARN("Failed sent joint point, skipping point");
+      }
+
+      rslt &= ptRslt;
+    }
+
+    return rslt;
+  }
+
+  void trajectoryStop()
+  {
+    industrial::simple_message::mikado_classes::MikadoDynamicJoints mikDynamicJoints;
+    industrial::simple_message::mikado_messages::MikadoDynamicJointsTrajPtMessage dyJtsMsg;
+    industrial::simple_message::SimpleMessage msg, reply;
+    mikDynamicJoints.setNumJoints(this->number_axis_trajectory_ + this->number_external_axis_trajectory_);
+    if(this->is_traj_duration_){
+      dyJtsMsg.point_.setField(DynamicJointsValidFieldTypes::DURATION);
+    }
+    if(this->is_traj_velocity_){
+      dyJtsMsg.point_.setField(DynamicJointsValidFieldTypes::VELOCITY);
+    }
+    dyJtsMsg.point_.setPositions(mikDynamicJoints);
+
+    ROS_INFO("Dynamic Joints trajectory handler: entering stopping state");
+    dyJtsMsg.setSequence(industrial::joint_traj_pt::SpecialSeqValues::STOP_TRAJECTORY);
+    dyJtsMsg.toRequest(msg);
+    ROS_DEBUG("Sending stop command");
+    this->connection_->sendAndReceiveMsg(msg, reply);
+  }
+
+  private:
+
+    int number_axis_trajectory_;
+    int number_external_axis_trajectory_;
+    bool is_traj_radian_;
+    bool is_traj_velocity_;
+    bool is_traj_duration_;
+
 };
 
 int main(int argc, char** argv)
@@ -77,9 +275,17 @@ int main(int argc, char** argv)
   // initialize node
   ros::init(argc, argv, "motion_interface");
 
-  // launch the default JointTrajectoryDownloader connection/handlers
   ABB_JointTrajectoryDownloader motionInterface;
-  motionInterface.init();
+  bool connection_established = false;
+  while (!connection_established){
+    bool minit = motionInterface.init();
+    connection_established = motionInterface.negotiateConnection();
+    if(!connection_established){
+      ROS_WARN("[ABB Joint Downloader] Failed to establish connection. Trying again.");
+      sleep(5);
+    }
+  }
+  ROS_WARN("[ABB Joint Downloader] Established connection");
   motionInterface.run();
 
   return 0;
