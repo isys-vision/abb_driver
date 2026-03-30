@@ -28,25 +28,35 @@ MODULE ROS_socket(SYSMODULE)
 ! WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 PROC ROS_init_socket(VAR socketdev server_socket, num port)
-    IF (SocketGetStatus(server_socket) = SOCKET_CLOSED) SocketCreate server_socket;
-    IF (SocketGetStatus(server_socket) = SOCKET_CREATED) SocketBind server_socket, GetSysInfo(\LanIp), port;
-    IF (SocketGetStatus(server_socket) = SOCKET_BOUND) SocketListen server_socket;
-
+    IF (SocketGetStatus(server_socket) = SOCKET_CLOSED) THEN
+        SocketCreate server_socket;
+    ENDIF
+    IF (SocketGetStatus(server_socket) = SOCKET_CREATED) THEN
+        SocketBind server_socket, GetSysInfo(\LanIp), port;
+    ENDIF
+    IF (SocketGetStatus(server_socket) = SOCKET_BOUND) THEN
+        SocketListen server_socket;
+    ENDIF
 ERROR
     RAISE;  ! raise errors to calling code
 ENDPROC
 
-PROC ROS_wait_for_client(VAR socketdev server_socket, VAR socketdev client_socket, \num wait_time)
+PROC ROS_wait_for_client(VAR socketdev server_socket, VAR socketdev client_socket, string server_name, \num wait_time)
     VAR string client_ip;
     VAR num time_val := WAIT_MAX;  ! default to wait-forever
 
-    IF Present(wait_time) time_val := wait_time;
+    IF Present(wait_time) THEN
+        time_val := wait_time;
+    ENDIF
 
-    IF (SocketGetStatus(client_socket) <> SOCKET_CLOSED) SocketClose client_socket;
+    IF (SocketGetStatus(client_socket) <> SOCKET_CLOSED) THEN
+        SocketClose client_socket;
+    ENDIF
     WaitUntil (SocketGetStatus(client_socket) = SOCKET_CLOSED);
 
     SocketAccept server_socket, client_socket, \ClientAddress:=client_ip, \Time:=time_val;
-    TPWrite "Client at "+client_ip+" connected.";
+    TPWrite "[" + server_name + "] Client at "+client_ip+" connected.";
+    ErrWrite \W, "[" + server_name + "] Client at "+client_ip+" connected.", "Success";
 
 ERROR
     RAISE;  ! raise errors to calling code

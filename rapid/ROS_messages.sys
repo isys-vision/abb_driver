@@ -65,6 +65,28 @@ RECORD ROS_msg_robot_status
     num motion_possible;
 ENDRECORD
 
+RECORD ROS_msg_dynamic_joints_data
+    ROS_msg_header header;
+    num sequence_id;
+    robjoint joints;  ! in DEGREES
+    extjoint ext_axes;
+    bool is_moving;
+ENDRECORD
+
+RECORD MIKADO_connection_info
+    ROS_msg_header header;
+    num num_ax_traj;
+    num num_ax_state;
+    num num_eax_traj;
+    num num_eax_state;
+    bool is_traj_radian;
+    bool is_state_radian;
+    bool is_traj_velocity;
+    bool is_traj_duration;
+    bool is_jstate_is_moving;
+    num traj_msg_length;
+ENDRECORD
+
 ! Message Type Codes (from simple_message/simple_message.h)
 CONST num ROS_MSG_TYPE_INVALID       := 0;
 CONST num ROS_MSG_TYPE_JOINT         := 10;  ! joint-position feedback
@@ -76,6 +98,9 @@ CONST num ROS_COM_TYPE_SRV_REPLY     := 3;
 CONST num ROS_REPLY_TYPE_INVALID     := 0;
 CONST num ROS_REPLY_TYPE_SUCCESS     := 1;
 CONST num ROS_REPLY_TYPE_FAILURE     := 2;
+CONST num ROS_MSG_TYPE_CONNECTION_INFO := 65008;
+CONST num ROS_MSG_TYPE_DJOINTS  := 65009;
+CONST num ROS_MSG_TYPE_DJOINTS_TRAJ_PT := 65010;
 
 ! "Special" Sequence Codes (from simple_message/joint_traj_pt.h)
 CONST num ROS_TRAJECTORY_START_DOWNLOAD := -1;
@@ -93,9 +118,66 @@ CONST num ROS_TRISTATE_TRUE          := 1;
 CONST num ROS_TRISTATE_ON            := 1;
 CONST num ROS_TRISTATE_FALSE         := 0;
 CONST num ROS_TRISTATE_OFF           := 0;
+CONST bool GET_ADDITIONAL_TRAJ_INFO  := FALSE;
+CONST bool GET_EXTERNAL_AXES         := FALSE;
 
 ! Other message constants
 CONST num ROS_MSG_MAX_JOINTS := 10;  ! from joint_data.h
+
+PROC MIKADO_receive_connection_info(VAR socketdev client_socket, VAR MIKADO_connection_info message, \num wait_time)
+    VAR ROS_msg raw_message;
+    VAR byte b_is_traj_radian;
+    VAR byte b_is_state_radian;
+    VAR byte b_is_traj_duration;
+    VAR byte b_is_traj_velocity;
+    VAR byte b_is_jstate_is_moving;
+
+    ! Read raw message data
+    IF Present(wait_time) THEN
+        ROS_receive_msg client_socket, raw_message, \wait_time:=wait_time;
+    ELSE
+        ROS_receive_msg client_socket, raw_message;
+    ENDIF
+
+    ! Integrity Check: Message Type
+    IF (raw_message.header.msg_type <> ROS_MSG_TYPE_CONNECTION_INFO) THEN
+        ErrWrite \W, "ROS Socket Type Mismatch", "Unexpected message type",
+                 \RL2:="expected: " + ValToStr(ROS_MSG_TYPE_CONNECTION_INFO),
+                 \RL3:="received: " + ValToStr(raw_message.header.msg_type);
+        RAISE ERR_ARGVALERR;  ! TBD: define specific error code
+    ENDIF
+
+    ! Integrity Check: Data Size
+    IF (RawBytesLen(raw_message.data) < 25) THEN
+        ErrWrite \W, "ROS Socket Missing Data", "Insufficient data for connection_info",
+                 \RL2:="expected: 25",
+                 \RL3:="received: " + ValToStr(RawBytesLen(raw_message.data));
+        RAISE ERR_OUTOFBND;  ! TBD: define specific error code
+    ENDIF
+
+    ! Copy Header data
+    message.header := raw_message.header;
+
+    ! Unpack data fields
+    UnpackRawBytes raw_message.data, 1, message.num_ax_traj, \IntX:=4;
+    UnpackRawBytes raw_message.data, 5, message.num_ax_state, \IntX:=4;
+    UnpackRawBytes raw_message.data, 9, message.num_eax_traj, \IntX:=4;
+    UnpackRawBytes raw_message.data, 13, message.num_eax_state, \IntX:=4;
+    UnpackRawBytes raw_message.data, 17, b_is_traj_radian, \Hex1;
+    UnpackRawBytes raw_message.data, 18, b_is_state_radian, \Hex1;
+    UnpackRawBytes raw_message.data, 19, b_is_traj_duration, \Hex1;
+    UnpackRawBytes raw_message.data, 20, b_is_traj_velocity, \Hex1;
+    UnpackRawBytes raw_message.data, 21, b_is_jstate_is_moving, \Hex1;
+
+    ! convert bytes to bools
+    message.is_traj_radian        := (b_is_traj_radian <> 0);
+    message.is_state_radian       := (b_is_state_radian <> 0);
+    message.is_traj_duration      := (b_is_traj_duration <> 0);
+    message.is_traj_velocity      := (b_is_traj_velocity <> 0);
+    message.is_jstate_is_moving   := (b_is_jstate_is_moving <> 0);
+ERROR
+    RAISE;  ! raise errors to calling code
+ENDPROC
 
 PROC ROS_receive_msg_joint_traj_pt(VAR socketdev client_socket, VAR ROS_msg_joint_traj_pt message, \num wait_time)
     VAR ROS_msg raw_message;
@@ -123,7 +205,7 @@ PROC ROS_receive_msg_joint_traj_pt(VAR socketdev client_socket, VAR ROS_msg_join
         RAISE ERR_OUTOFBND;  ! TBD: define specific error code
     ENDIF
 
-    ! Copy Header data
+    ! Copy Header data -> not used if we never reply to messages
     message.header := raw_message.header;
 
     ! Unpack data fields
@@ -134,17 +216,188 @@ PROC ROS_receive_msg_joint_traj_pt(VAR socketdev client_socket, VAR ROS_msg_join
     UnpackRawBytes raw_message.data, 17, message.joints.rax_4, \Float4;
     UnpackRawBytes raw_message.data, 21, message.joints.rax_5, \Float4;
     UnpackRawBytes raw_message.data, 25, message.joints.rax_6, \Float4;
-    UnpackRawBytes raw_message.data, 29, message.ext_axes.eax_a, \Float4;
-    UnpackRawBytes raw_message.data, 33, message.ext_axes.eax_b, \Float4;
-    UnpackRawBytes raw_message.data, 37, message.ext_axes.eax_c, \Float4;
-    UnpackRawBytes raw_message.data, 41, message.ext_axes.eax_d, \Float4;
-    UnpackRawBytes raw_message.data, 45, message.velocity, \Float4;
-    UnpackRawBytes raw_message.data, 49, message.duration, \Float4;
+    IF(GET_EXTERNAL_AXES) THEN
+        UnpackRawBytes raw_message.data, 29, message.ext_axes.eax_a, \Float4;
+        UnpackRawBytes raw_message.data, 33, message.ext_axes.eax_b, \Float4;
+        UnpackRawBytes raw_message.data, 37, message.ext_axes.eax_c, \Float4;
+        UnpackRawBytes raw_message.data, 41, message.ext_axes.eax_d, \Float4;
+        message.ext_axes := m2mm_extjoint(message.ext_axes);
+    ENDIF
+    IF(GET_ADDITIONAL_TRAJ_INFO) THEN
+        UnpackRawBytes raw_message.data, 45, message.velocity, \Float4;
+        UnpackRawBytes raw_message.data, 49, message.duration, \Float4;
+    ENDIF
 
     ! Convert data from ROS units to ABB units
-    message.joints := rad2deg_robjoint(message.joints);
-    message.ext_axes := m2mm_extjoint(message.ext_axes);
+    !message.joints := rad2deg_robjoint(message.joints);
+
+ERROR
+    RAISE;  ! raise errors to calling code
+ENDPROC
+
+PROC ROS_receive_msg_dyn_jts_traj_pt(VAR socketdev client_socket, VAR ROS_msg_joint_traj_pt message, \num wait_time)
+    VAR ROS_msg raw_message;
+    VAR ROS_msg reply_msg;
+    VAR num curr_byte;
+    VAR num EOM;
+    curr_byte := 1;
+
+    ! Read raw message data
+    IF Present(wait_time) THEN
+        ROS_receive_msg client_socket, raw_message, \wait_time:=wait_time;
+    ELSE
+        ROS_receive_msg client_socket, raw_message;
+    ENDIF
+
+    ! Integrity Check: Message Type
+    IF (raw_message.header.msg_type <> ROS_MSG_TYPE_DJOINTS_TRAJ_PT) THEN
+        ErrWrite \W, "ROS Socket Type Mismatch", "Unexpected message type",
+                 \RL2:="expected: " + ValToStr(ROS_MSG_TYPE_DJOINTS_TRAJ_PT),
+                 \RL3:="received: " + ValToStr(raw_message.header.msg_type);
+        IF (raw_message.header.comm_type = ROS_COM_TYPE_SRV_REQ) THEN
+            TPWrite "Replying to service msg of type: " + ValToStr(raw_message.header.msg_type);
+            reply_msg.header := [raw_message.header.msg_type, ROS_COM_TYPE_SRV_REPLY, ROS_REPLY_TYPE_SUCCESS];
+            ROS_send_msg client_socket, reply_msg;
+        ENDIF
+        RAISE ERR_ARGVALERR;  ! TBD: define specific error code
+    ENDIF
+
+    ! Integrity Check: Data Size
+    IF (RawBytesLen(raw_message.data) < connection_info.traj_msg_length) THEN
+        ErrWrite \W, "ROS Socket Missing Data", "Insufficient data for dynamic_joint_trajectory_pt",
+                 \RL2:="expected: " + ValToStr(connection_info.traj_msg_length),
+                 \RL3:="received: " + ValToStr(RawBytesLen(raw_message.data));
+        RAISE ERR_OUTOFBND;  ! TBD: define specific error code
+    ENDIF
+
+    ! Copy Header data
+    message.header := raw_message.header;
+
+    ! Unpack data fields
+    UnpackRawBytes raw_message.data, curr_byte, message.sequence_id, \IntX:=DINT;
+    curr_byte := curr_byte + 4;
+    IF(connection_info.is_traj_duration) THEN
+        UnpackRawBytes raw_message.data, curr_byte, message.duration, \Float4;
+        curr_byte := curr_byte + 4;
+    ENDIF
+    IF(connection_info.is_traj_velocity) THEN
+        UnpackRawBytes raw_message.data, curr_byte, message.velocity, \Float4;
+        curr_byte := curr_byte + 4;
+    ENDIF
+
+    UnpackRawBytes raw_message.data, curr_byte, message.joints.rax_1, \Float4;
+    curr_byte := curr_byte + 4;
+    UnpackRawBytes raw_message.data, curr_byte, message.joints.rax_2, \Float4;
+    curr_byte := curr_byte + 4;
+    UnpackRawBytes raw_message.data, curr_byte, message.joints.rax_3, \Float4;
+    curr_byte := curr_byte + 4;
+    UnpackRawBytes raw_message.data, curr_byte, message.joints.rax_4, \Float4;
+    curr_byte := curr_byte + 4;
+    UnpackRawBytes raw_message.data, curr_byte, message.joints.rax_5, \Float4;
+    curr_byte := curr_byte + 4;
+    IF(connection_info.num_ax_traj>5) THEN
+        UnpackRawBytes raw_message.data, curr_byte, message.joints.rax_6, \Float4;
+        curr_byte := curr_byte + 4;
+    ENDIF
+    IF(connection_info.num_eax_traj>0) THEN
+        UnpackRawBytes raw_message.data, curr_byte, message.ext_axes.eax_a, \Float4;
+        curr_byte := curr_byte + 4;
+        IF(connection_info.num_eax_traj>1) THEN
+            UnpackRawBytes raw_message.data, curr_byte, message.ext_axes.eax_b, \Float4;
+            curr_byte := curr_byte + 4;
+            IF(connection_info.num_eax_traj>2) THEN
+                UnpackRawBytes raw_message.data, curr_byte, message.ext_axes.eax_c, \Float4;
+                curr_byte := curr_byte + 4;
+                IF(connection_info.num_eax_traj>3) THEN
+                    UnpackRawBytes raw_message.data, curr_byte, message.ext_axes.eax_d, \Float4;
+                    curr_byte := curr_byte + 4;
+                ENDIF
+            ENDIF
+        ENDIF
+    ENDIF
+    ! Unpacking EOM bytes
+    UnPackRawBytes  raw_message.data, curr_byte, EOM, \IntX:=4;
+    ! Convert data from ROS units to ABB units
+    IF(connection_info.is_traj_radian) THEN
+        message.joints := rad2deg_robjoint(message.joints);
+        IF(connection_info.num_eax_traj>0) THEN
+            message.ext_axes := m2mm_extjoint(message.ext_axes);
+        ENDIF
+    ENDIF
     ! TBD: convert velocity
+
+ERROR
+    RAISE;  ! raise errors to calling code
+ENDPROC
+
+PROC ROS_send_msg_dynamic_joints_data(VAR socketdev client_socket, ROS_msg_dynamic_joints_data message)
+    VAR ROS_msg raw_message;
+    VAR robjoint ROS_joints;
+    VAR extjoint ROS_ext_axes;
+    VAR num i;
+    VAR num curr_byte;
+    VAR byte is_moving_byte;
+
+    ! Force message header to the correct values
+    !raw_message.header.msg_type := ROS_MSG_TYPE_JOINT;
+    raw_message.header.msg_type := ROS_MSG_TYPE_DJOINTS;
+    raw_message.header.comm_type := ROS_COM_TYPE_TOPIC;
+    raw_message.header.reply_code := ROS_REPLY_TYPE_INVALID;
+
+    ! Convert data from ABB units to ROS units
+    IF(connection_info.is_state_radian) THEN
+        ROS_joints := deg2rad_robjoint(message.joints);
+        IF(connection_info.num_eax_state>0) THEN
+            ROS_ext_axes := mm2m_extjoint(message.ext_axes);
+        ENDIF
+    ELSE
+        ROS_joints := message.joints;
+        IF(connection_info.num_eax_state>0) THEN
+            ROS_ext_axes := message.ext_axes;
+        ENDIF
+    ENDIF
+
+    ! Pack data into message -> Last num are end of message bytes
+    PackRawBytes message.sequence_id, raw_message.data,  1, \IntX:=DINT;
+    PackRawBytes ROS_joints.rax_1,    raw_message.data,  5, \Float4;
+    PackRawBytes ROS_joints.rax_2,    raw_message.data,  9, \Float4;
+    PackRawBytes ROS_joints.rax_3,    raw_message.data, 13, \Float4;
+    PackRawBytes ROS_joints.rax_4,    raw_message.data, 17, \Float4;
+    PackRawBytes ROS_joints.rax_5,    raw_message.data, 21, \Float4;
+    IF(connection_info.num_ax_state > 5) THEN
+        PackRawBytes ROS_joints.rax_6,    raw_message.data, 25, \Float4;
+        curr_byte := 29;
+    ELSE
+        curr_byte := 25;
+    ENDIF
+    IF(connection_info.num_eax_state>0) THEN
+        PackRawBytes ROS_ext_axes.eax_a,  raw_message.data, curr_byte, \Float4;
+        curr_byte := curr_byte + 4;
+        IF(connection_info.num_eax_state>1) THEN
+            PackRawBytes ROS_ext_axes.eax_b,  raw_message.data, curr_byte, \Float4;
+            curr_byte := curr_byte + 4;
+            IF(connection_info.num_eax_state>2) THEN
+                PackRawBytes ROS_ext_axes.eax_c,  raw_message.data, curr_byte, \Float4;
+                curr_byte := curr_byte + 4;
+                IF(connection_info.num_eax_state>3) THEN
+                    PackRawBytes ROS_ext_axes.eax_d,  raw_message.data, curr_byte, \Float4;
+                    curr_byte := curr_byte + 4;
+                ENDIF
+            ENDIF
+        ENDIF
+    ENDIF
+    IF(connection_info.is_jstate_is_moving) THEN
+        IF message.is_moving THEN
+            is_moving_byte := 1;
+        ELSE
+            is_moving_byte := 0;
+        ENDIF
+         PackRawBytes  is_moving_byte,  raw_message.data, curr_byte, \Hex1;
+         curr_byte := curr_byte + 1;
+    ENDIF
+    PackRawBytes  4294967295,              raw_message.data, curr_byte, \IntX:=4;
+
+    ROS_send_msg client_socket, raw_message;
 
 ERROR
     RAISE;  ! raise errors to calling code
@@ -157,13 +410,16 @@ PROC ROS_send_msg_joint_data(VAR socketdev client_socket, ROS_msg_joint_data mes
     VAR num i;
 
     ! Force message header to the correct values
-    raw_message.header.msg_type := ROS_MSG_TYPE_JOINT;
+    !raw_message.header.msg_type := ROS_MSG_TYPE_JOINT;
+    raw_message.header.msg_type := ROS_MSG_TYPE_DJOINTS;
     raw_message.header.comm_type := ROS_COM_TYPE_TOPIC;
     raw_message.header.reply_code := ROS_REPLY_TYPE_INVALID;
 
     ! Convert data from ABB units to ROS units
-    ROS_joints := deg2rad_robjoint(message.joints);
-    ROS_ext_axes := mm2m_extjoint(message.ext_axes);
+    ROS_joints := message.joints;
+    IF(GET_EXTERNAL_AXES) THEN
+        ROS_ext_axes := mm2m_extjoint(message.ext_axes);
+    ENDIF
 
     ! Pack data into message
     PackRawBytes message.sequence_id, raw_message.data,  1, \IntX:=DINT;

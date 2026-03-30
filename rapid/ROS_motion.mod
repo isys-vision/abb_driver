@@ -29,47 +29,76 @@ MODULE ROS_motion
 ! WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 LOCAL CONST zonedata DEFAULT_CORNER_DIST := z10;
-LOCAL VAR ROS_joint_trajectory_pt trajectory{MAX_TRAJ_LENGTH};
 LOCAL VAR num trajectory_size := 0;
 LOCAL VAR intnum intr_new_trajectory;
+LOCAL VAR jointtarget curr_jnt;
 
 PROC main()
     VAR num current_index;
-    VAR jointtarget target;
-    VAR speeddata move_speed := v10;  ! default speed
+    ! default speed, be careful when increasing this. By default, all movements use this fixed velocity.
+    VAR speeddata move_speed := v1000;
     VAR zonedata stop_mode;
     VAR bool skip_move;
+    ! isDebug can be set to FALSE if less output should be printed to the TP
+    isDebug := TRUE;
 
-    ! Set up interrupt to watch for new trajectory
-    IDelete intr_new_trajectory;    ! clear interrupt handler, in case restarted with ExitCycle
+    ! set up interrupt to watch for new trajectory
+    IDelete intr_new_trajectory;
+    ! clear interrupt handler, in case restarted with ExitCycle
     CONNECT intr_new_trajectory WITH new_trajectory_handler;
     IPers ROS_new_trajectory, intr_new_trajectory;
 
     WHILE true DO
-        ! Check for new Trajectory
-        IF (ROS_new_trajectory)
+        !WaitUntil ROS_new_trajectory \PollRate := 0.01;
+        !init_trajectory;
+        ! check for new trajectory
+        IF(ROS_new_trajectory) THEN
             init_trajectory;
+        ENDIF
+
+        ! check if robot should take control
+        ! we are setting a digital output in mikado and then wait until it is reset
+        ! in the meantime the robot can do whatever it wants
+        !IF MIK_DO3 = 1 THEN
+        !    TPWrite "Robot taking control";
+			!MoveJ p9, v1000, z50, tool0;
+			!MoveJ p19, v1000, z50, tool0;
+			!MoveJ p10, v1000, z50, tool0;
+		!	WaitRob \InPos;
+        !    InvertDO MIK_DO3;
+        !ENDIF
 
         ! execute all points in this trajectory
         IF (trajectory_size > 0) THEN
             FOR current_index FROM 1 TO trajectory_size DO
-                target.robax := trajectory{current_index}.joint_pos;
-                target.extax := trajectory{current_index}.extax_pos;
+                skip_move := (current_index = 1) AND is_near(traj_buffer{current_index}, 0.1, 0.1);
 
-                skip_move := (current_index = 1) AND is_near(target, 0.1, 0.1);
+                IF (current_index = trajectory_size) THEN
+                    ! use fine move at last point. Maybe switch to z0+ depending on application
+                    stop_mode := fine;
+                ELSE
+                    ! assume we're smoothing between points
+                    stop_mode := DEFAULT_CORNER_DIST;
+                ENDIF
 
-                stop_mode := DEFAULT_CORNER_DIST;  ! assume we're smoothing between points
-                IF (current_index = trajectory_size) stop_mode := fine;  ! stop at path end
+                IF (current_index = 1) THEN
+                    is_not_receiving_traj := TRUE;
+                ENDIF
 
                 ! Execute move command
-                IF (NOT skip_move)
-                    MoveAbsJ target, move_speed, \T:=trajectory{current_index}.duration, stop_mode, tool0;
+                IF (NOT skip_move) THEN
+                    !MoveAbsJ target, move_speed, \T:=trajectory{current_index}.duration, stop_mode, tool0;
+                    MoveAbsJ traj_buffer{current_index}, move_speed, stop_mode, tool0;
+                    !SpeedRefresh 30;
+                ENDIF
             ENDFOR
-
-            trajectory_size := 0;  ! trajectory done
+            WaitRob \InPos;
+            robotAtGoal := TRUE;
+            ! trajectory done
+            trajectory_size := 0;
         ENDIF
-
-        WaitTime 0.05;  ! Throttle loop while waiting for new command
+        ! Throttle loop while waiting for new command
+        WaitTime 0.01;
     ENDWHILE
 ERROR
     ErrWrite \W, "Motion Error", "Error executing motion.  Aborting trajectory.";
@@ -77,18 +106,16 @@ ERROR
 ENDPROC
 
 LOCAL PROC init_trajectory()
-    clear_path;                    ! cancel any active motions
-
-    WaitTestAndSet ROS_trajectory_lock;  ! acquire data-lock
-    trajectory := ROS_trajectory;            ! copy to local var
-    trajectory_size := ROS_trajectory_size;  ! copy to local var
+    clear_path;
+    robotAtGoal := FALSE;
+    ! acquire data-lock
+    WaitTestAndSet ROS_trajectory_lock;
+    trajectory_size := traj_size_pers;
     ROS_new_trajectory := FALSE;
-    ROS_trajectory_lock := FALSE;         ! release data-lock
+    ROS_trajectory_lock := FALSE;
 ENDPROC
 
 LOCAL FUNC bool is_near(jointtarget target, num deg_tol, num mm_tol)
-    VAR jointtarget curr_jnt;
-
     curr_jnt := CJointT();
 
     ! either an external axis is unconfigured/not present OR if it is, then it must be close enough
@@ -105,21 +132,23 @@ LOCAL FUNC bool is_near(jointtarget target, num deg_tol, num mm_tol)
 ENDFUNC
 
 LOCAL PROC abort_trajectory()
-    trajectory_size := 0;  ! "clear" local trajectory
-    clear_path;
-    ExitCycle;  ! restart program
+    ! "clear" local trajectory
+    trajectory_size := 0;
+    ! restart program
+    ExitCycle;
 ENDPROC
 
 LOCAL PROC clear_path()
-    IF ( NOT (IsStopMoveAct(\FromMoveTask) OR IsStopMoveAct(\FromNonMoveTask)) )
-        StopMove;          ! stop any active motions
+    ! IF ( NOT (IsStopMoveAct(\FromMoveTask) OR IsStopMoveAct(\FromNonMoveTask)) )
+    !    StopMove;          ! stop any active motions
     ClearPath;             ! clear queued motion commands
-    StartMove;             ! re-enable motions
+    !StartMove;             ! re-enable motions
 ENDPROC
 
 LOCAL TRAP new_trajectory_handler
-    IF (NOT ROS_new_trajectory) RETURN;
-
+    IF (NOT ROS_new_trajectory) THEN
+        RETURN;
+    ENDIF
     abort_trajectory;
 ENDTRAP
 

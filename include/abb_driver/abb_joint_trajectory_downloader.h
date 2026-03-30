@@ -1,7 +1,7 @@
 /*
  * Software License Agreement (BSD License)
  *
- * Copyright (c) 2012, Southwest Research Institute
+ * Copyright (c) 2011, Southwest Research Institute
  * All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
@@ -29,29 +29,33 @@
  * POSSIBILITY OF SUCH DAMAGE.
  */
 
-#include "abb_driver/abb_utils.h"
-#include "ros/ros.h"
+#ifndef JOINT_TRAJECTORY_DOWNLOADER_H
+#define JOINT_TRAJECTORY_DOWNLOADER_H
 
-namespace abb
+#include "abb_joint_trajectory_interface.h"
+
+namespace industrial_robot_client
 {
-namespace utils
+namespace joint_trajectory_downloader
 {
 
-// TBD: This transform should also account for velocity/acceleration affects due to linkage, so that velocity calculation is accurate
-void linkage_transform(const trajectory_msgs::JointTrajectoryPoint& pt_in, trajectory_msgs::JointTrajectoryPoint* pt_out, double J23_factor)
+using industrial_robot_client::joint_trajectory_interface::ABBJointTrajectoryInterface;
+using industrial::joint_traj_pt_message::JointTrajPtMessage;
+
+/**
+ * \brief Message handler that downloads joint trajectories to
+ * a robot controller that supports the trajectory downloading interface
+ */
+class ABBJointTrajectoryDownloader : public ABBJointTrajectoryInterface
 {
-  *pt_out = pt_in;
-  linkage_transform(pt_in.positions, &(pt_out->positions), J23_factor);
-}
 
-void linkage_transform(const std::vector<double>& points_in, std::vector<double>* points_out, double J23_factor)
-{
-  ROS_ASSERT(points_in.size() > 3);
+public:
 
-  *points_out = points_in;
-  points_out->at(2) += J23_factor * points_out->at(1);
-}
+  bool send_to_robot(const std::vector<JointTrajPtMessage>& messages);
 
-} //abb
+};
 
-} //utils
+} //joint_trajectory_downloader
+} //industrial_robot_client
+
+#endif /* JOINT_TRAJECTORY_DOWNLOADER_H */
