@@ -32,16 +32,26 @@ LOCAL CONST zonedata DEFAULT_CORNER_DIST := z10;
 LOCAL VAR num trajectory_size := 0;
 LOCAL VAR intnum intr_new_trajectory;
 LOCAL VAR jointtarget curr_jnt;
+PERS bool pub_transit_pose;
 
 PROC main()
     VAR num current_index;
     ! default speed, be careful when increasing this. By default, all movements use this fixed velocity.
-    VAR speeddata move_speed := v1000;
+    VAR speeddata move_speed := v4000;!v1000;
+    VAR speeddata slow_move_speed := v300;!v500;
     VAR zonedata stop_mode;
     VAR bool skip_move;
+    VAR bool do_brake;
+    VAR jointtarget p1;
+    VAR jointtarget p2;
+    VAR jointtarget p3;
+    pub_transit_pose := FALSE;
+    p1.robax := [-11.71, -32.94, 39.17, -0.022, 83.76, 168.29];
+    p2.robax := [170, -32.94, 39.17, -0.022, 83.76, 168.29];
+    p3.robax := [75, -32.94, 39.17, -0.022, 83.76, 168.29];
     ! isDebug can be set to FALSE if less output should be printed to the TP
-    isDebug := TRUE;
-
+    isDebug := FALSE;
+    do_brake := FALSE;
     ! set up interrupt to watch for new trajectory
     IDelete intr_new_trajectory;
     ! clear interrupt handler, in case restarted with ExitCycle
@@ -59,19 +69,36 @@ PROC main()
         ! check if robot should take control
         ! we are setting a digital output in mikado and then wait until it is reset
         ! in the meantime the robot can do whatever it wants
-        !IF MIK_DO3 = 1 THEN
-        !    TPWrite "Robot taking control";
-			!MoveJ p9, v1000, z50, tool0;
-			!MoveJ p19, v1000, z50, tool0;
+        IF MIK_DO3 = 1 THEN
+            TPWrite "Robot taking control";
+            pub_transit_pose := true;
+			MoveAbsJ p1, v1000, z50, tool0;
+            !InvertDO MIK_DO3;
+            MoveAbsJ p3, v1000, z50, tool0;
+            MoveAbsJ p2, v1000, z50, tool0;
+            WaitTime 1.0;
+            !InvertDO MIK_DO3;
+            MoveAbsJ p3, v1000, z50, tool0;
+            MoveAbsJ p1, v1000, z50, tool0;
+			InvertDO MIK_DO3;
+            !MoveJ p19, v1000, z50, tool0;
 			!MoveJ p10, v1000, z50, tool0;
-		!	WaitRob \InPos;
-        !    InvertDO MIK_DO3;
-        !ENDIF
+			WaitRob \InPos;
+            robotAtGoal := TRUE;
+            !InvertDO MIK_DO3;
+            pub_transit_pose := false;
+        ENDIF
 
         ! execute all points in this trajectory
         IF (trajectory_size > 0) THEN
             FOR current_index FROM 1 TO trajectory_size DO
                 skip_move := (current_index = 1) AND is_near(traj_buffer{current_index}, 0.1, 0.1);
+                IF ((trajectory_size > 5) AND (trajectory_size - current_index < 2)) THEN
+                    ! we assume that this is a pick and want to drive the last 2 points slower
+                    do_brake := TRUE;
+                ELSE
+                    do_brake := FALSE;
+                ENDIF
 
                 IF (current_index = trajectory_size) THEN
                     ! use fine move at last point. Maybe switch to z0+ depending on application
@@ -88,11 +115,16 @@ PROC main()
                 ! Execute move command
                 IF (NOT skip_move) THEN
                     !MoveAbsJ target, move_speed, \T:=trajectory{current_index}.duration, stop_mode, tool0;
-                    MoveAbsJ traj_buffer{current_index}, move_speed, stop_mode, tool0;
-                    !SpeedRefresh 30;
+                    IF(do_brake) THEN
+                        MoveAbsJ traj_buffer{current_index}, slow_move_speed, stop_mode, tool0;
+                    ELSE
+                        MoveAbsJ traj_buffer{current_index}, move_speed, stop_mode, tool0;
+                    ENDIF
                 ENDIF
             ENDFOR
-            WaitRob \InPos;
+            IF(MIK_DO3 = 0) THEN
+                WaitRob \InPos;
+            ENDIF
             robotAtGoal := TRUE;
             ! trajectory done
             trajectory_size := 0;

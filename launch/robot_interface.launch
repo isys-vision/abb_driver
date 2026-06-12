@@ -26,7 +26,7 @@
   
   <!-- robot_state: publishes joint positions and robot-state data
                    (from socket connection to robot) -->
-  <node pkg="abb_driver" type="robot_state" name="robot_state"/>
+  <node pkg="abb_driver" type="robot_state" name="robot_state" respawn="true"/>
   
   <!-- motion_download_interface: sends robot motion commands by DOWNLOADING path to robot
                                   (using socket connection to robot) -->

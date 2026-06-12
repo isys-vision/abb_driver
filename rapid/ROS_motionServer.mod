@@ -49,7 +49,9 @@ PROC main()
 
     ! wait for connection info message and configure driver
     MIKADO_receive_connection_info client_socket, connection_info;
-    TPWrite "[MotionServer] Received connection info. Num traj axes: " + ValToStr(connection_info.num_ax_traj);
+    IF(isDebug) THEN
+        TPWrite "[MotionServer] Received connection info. Num traj axes: " + ValToStr(connection_info.num_ax_traj);
+    ENDIF
     connection_info.traj_msg_length := 8 + 4 * (connection_info.num_ax_traj + connection_info.num_eax_traj);
     IF(connection_info.is_traj_duration) THEN
         connection_info.traj_msg_length := connection_info.traj_msg_length + 4;

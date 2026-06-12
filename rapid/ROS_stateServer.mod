@@ -40,6 +40,7 @@ VAR num min_state_update_rate := 1.0 / MIN_STATE_HZ;
 CONST num status_n := 35;
 VAR bool robotAtGoalEvent := FALSE;
 VAR MIKADO_connection_info connection_info;
+PERS bool pub_transit_pose;
 
 LOCAL VAR socketdev server_socket;
 LOCAL VAR socketdev client_socket;
@@ -76,7 +77,11 @@ PROC main()
     ENDIF
 
     WHILE TRUE DO
-        send_joints;
+        if(pub_transit_pose) THEN
+            send_transit_pose;
+        ELSE
+            send_joints;
+        ENDIF
         IF((i MOD status_n = 0) OR is_not_receiving_traj = FALSE)THEN
             send_status;
             i := 1;
@@ -131,6 +136,23 @@ LOCAL PROC send_joints()
         ELSE
             joint_message.is_moving:=TRUE;
         ENDIF
+    ENDIF
+
+    ! send message to client
+    ROS_send_msg_dynamic_joints_data client_socket, joint_message;
+
+ERROR
+    RAISE;  ! raise errors to calling code
+ENDPROC
+
+LOCAL PROC send_transit_pose()
+    ! insert actual transit pose here
+    joint_message.joints := [-11.71, -32.94, 39.17, -0.022, 83.76, 168.29];
+    IF(connection_info.num_eax_state>0) THEN
+        joint_message.ext_axes := joints.extax;
+    ENDIF
+    IF(connection_info.is_jstate_is_moving) THEN
+        joint_message.is_moving:=FALSE;
     ENDIF
 
     ! send message to client
