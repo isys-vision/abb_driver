@@ -62,9 +62,9 @@ ERROR
     RAISE;  ! raise errors to calling code
 ENDPROC
 
-PROC ROS_receive_msg(VAR socketdev client_socket, VAR ROS_msg message, \num wait_time)
+FUNC bool ROS_receive_msg(VAR socketdev client_socket, VAR ROS_msg message, \num wait_time)
     VAR rawbytes buffer;
-    VAR num time_val := WAIT_MAX;  ! default to wait-forever
+    VAR num time_val := 10.0; ! Wait max 10 seconds, then return false
     VAR num bytes_rcvd;
     VAR num msg_length;
 
@@ -83,7 +83,7 @@ PROC ROS_receive_msg(VAR socketdev client_socket, VAR ROS_msg message, \num wait
         ErrWrite \W, "ROS Socket Recv Failed", "Did not receive expected # of bytes.",
                  \RL2:="Expected: " + ValToStr(msg_length),
                  \RL3:="Received: " + ValToStr(bytes_rcvd);
-        RETURN;
+        RETURN FALSE;
     ENDIF
 
     ! Unpack message header/data
@@ -91,10 +91,16 @@ PROC ROS_receive_msg(VAR socketdev client_socket, VAR ROS_msg message, \num wait
     UnpackRawBytes buffer, 5, message.header.comm_type, \IntX:=DINT;
     UnpackRawBytes buffer, 9, message.header.reply_code, \IntX:=DINT;
     CopyRawBytes   buffer, 13, message.data, 1;
+    RETURN TRUE;
 
 ERROR
-    RAISE;  ! raise errors to calling code
-ENDPROC
+    IF(ERRNO=ERR_SOCK_TIMEOUT) THEN
+        SkipWarn;
+        RETURN FALSE;
+    ELSE
+        RAISE;  ! raise errors to calling code
+    ENDIF
+ENDFUNC
 
 PROC ROS_send_msg(VAR socketdev client_socket, VAR ROS_msg message)
     VAR rawbytes buffer;

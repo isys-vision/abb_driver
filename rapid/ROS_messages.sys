@@ -131,13 +131,15 @@ PROC MIKADO_receive_connection_info(VAR socketdev client_socket, VAR MIKADO_conn
     VAR byte b_is_traj_duration;
     VAR byte b_is_traj_velocity;
     VAR byte b_is_jstate_is_moving;
-
+    VAR bool res := false;
     ! Read raw message data
-    IF Present(wait_time) THEN
-        ROS_receive_msg client_socket, raw_message, \wait_time:=wait_time;
-    ELSE
-        ROS_receive_msg client_socket, raw_message;
-    ENDIF
+    WHILE(res=false) DO
+        IF Present(wait_time) THEN
+            res := ROS_receive_msg(client_socket, raw_message, \wait_time:=wait_time);
+        ELSE
+            res := ROS_receive_msg(client_socket, raw_message);
+        ENDIF
+    ENDWHILE
 
     ! Integrity Check: Message Type
     IF (raw_message.header.msg_type <> ROS_MSG_TYPE_CONNECTION_INFO) THEN
@@ -181,13 +183,16 @@ ENDPROC
 
 PROC ROS_receive_msg_joint_traj_pt(VAR socketdev client_socket, VAR ROS_msg_joint_traj_pt message, \num wait_time)
     VAR ROS_msg raw_message;
-
+    VAR bool res := false;
     ! Read raw message data
-    IF Present(wait_time) THEN
-        ROS_receive_msg client_socket, raw_message, \wait_time:=wait_time;
-    ELSE
-        ROS_receive_msg client_socket, raw_message;
-    ENDIF
+    WHILE(res=false) DO
+        ! Read raw message data
+        IF Present(wait_time) THEN
+            res := ROS_receive_msg(client_socket, raw_message, \wait_time:=wait_time);
+        ELSE
+            res := ROS_receive_msg(client_socket, raw_message);
+        ENDIF
+    ENDWHILE
 
     ! Integrity Check: Message Type
     IF (raw_message.header.msg_type <> ROS_MSG_TYPE_JOINT_TRAJ_PT) THEN
@@ -240,14 +245,18 @@ PROC ROS_receive_msg_dyn_jts_traj_pt(VAR socketdev client_socket, VAR ROS_msg_jo
     VAR ROS_msg reply_msg;
     VAR num curr_byte;
     VAR num EOM;
+    VAR bool res := false;
     curr_byte := 1;
-
+    
     ! Read raw message data
-    IF Present(wait_time) THEN
-        ROS_receive_msg client_socket, raw_message, \wait_time:=wait_time;
-    ELSE
-        ROS_receive_msg client_socket, raw_message;
-    ENDIF
+    WHILE(res=false) DO
+        ! Read raw message data
+        IF Present(wait_time) THEN
+            res := ROS_receive_msg(client_socket, raw_message, \wait_time:=wait_time);
+        ELSE
+            res := ROS_receive_msg(client_socket, raw_message);
+        ENDIF
+    ENDWHILE
 
     ! Integrity Check: Message Type
     IF (raw_message.header.msg_type <> ROS_MSG_TYPE_DJOINTS_TRAJ_PT) THEN
