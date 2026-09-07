@@ -392,10 +392,10 @@ PROC ROS_send_msg_dynamic_joints_data(VAR socketdev client_socket, ROS_msg_dynam
         ELSE
             is_moving_byte := 0;
         ENDIF
-         PackRawBytes  is_moving_byte,  raw_message.data, curr_byte, \Hex1;
+         PackRawBytes  is_moving_byte, raw_message.data, curr_byte, \Hex1;
          curr_byte := curr_byte + 1;
     ENDIF
-    PackRawBytes  4294967295,              raw_message.data, curr_byte, \IntX:=4;
+    PackRawBytes  4294967295, raw_message.data, curr_byte, \IntX:=4;
 
     ROS_send_msg client_socket, raw_message;
 

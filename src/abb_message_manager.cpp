@@ -140,7 +140,9 @@ void ABBMessageManager::spinOnce()
     ROS_WARN("[MessageManager] Not connected to server");
     this->getCommsFaultHandler()->connectionFailCB();
   }
-  if (this->getConnection()->receiveMsg(msg))
+  // If we did not receive as msg for 5 seconds there is something severly wrong
+  // this requires a special branch of industrial_core!
+  if (this->getConnection()->receiveMsgWithTimeout(msg, 5.0))
   {
     handler = this->getHandler(msg.getMessageType());
 
