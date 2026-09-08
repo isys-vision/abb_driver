@@ -35,8 +35,8 @@ add_library(abb_interfaces
     src/abb_robot_state_interface.cpp
 )
 
-add_library(mikado_simple_message ${MSG_SRC_FILES})
-target_link_libraries(mikado_simple_message
+add_library(abb_mikado_simple_message ${MSG_SRC_FILES})
+target_link_libraries(abb_mikado_simple_message
   simple_message)
 
 add_definitions(-DLINUXSOCKETS)
@@ -50,7 +50,7 @@ add_executable(${PROJECT_NAME}_robot_state
   src/abb_simple_comms_fault_handler.cpp
   )
 target_link_libraries(${PROJECT_NAME}_robot_state
-  mikado_simple_message
+  abb_mikado_simple_message
   industrial_robot_client
   simple_message
   ${catkin_LIBRARIES})
@@ -67,7 +67,7 @@ add_executable(${PROJECT_NAME}_motion_download_interface
   src/abb_utils.cpp)
 target_link_libraries(${PROJECT_NAME}_motion_download_interface
   abb_interfaces
-  mikado_simple_message
+  abb_mikado_simple_message
   industrial_robot_client
   simple_message
   ${catkin_LIBRARIES})
@@ -88,7 +88,7 @@ install(
 
 install(
   TARGETS
-    mikado_simple_message
+    abb_mikado_simple_message
     abb_interfaces
   ARCHIVE DESTINATION ${CATKIN_PACKAGE_LIB_DESTINATION}
   LIBRARY DESTINATION ${CATKIN_PACKAGE_LIB_DESTINATION}
