@@ -64,8 +64,8 @@ PROC main()
         trajectory_pt_callback message;
     ENDWHILE
 
-ERROR (ERR_SOCK_TIMEOUT, ERR_SOCK_CLOSED, ERR_SOCK_UNSPEC)
-    IF (ERRNO=ERR_SOCK_TIMEOUT) OR (ERRNO=ERR_SOCK_CLOSED) OR (ERRNO=ERR_SOCK_UNSPEC) THEN
+ERROR (ERR_SOCK_TIMEOUT, ERR_SOCK_CLOSED)
+    IF (ERRNO=ERR_SOCK_TIMEOUT) OR (ERRNO=ERR_SOCK_CLOSED) THEN
         SkipWarn;  ! TBD: include this error data in the message logged below?
         ErrWrite \W, "[MotionServer] ROS MotionServer disconnect", "Connection lost.  Resetting socket.";
         ! restart program
